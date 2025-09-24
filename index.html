@@ -72,6 +72,8 @@
             padding: 12px 0;
             border-bottom: 1px solid #eee;
         }
+        
+        .hidden { display: none; }
     </style>
 </head>
 <body>
@@ -110,7 +112,7 @@
             </div>
         </div>
         
-        <button class="btn-success" onclick="carregarDaNuvem()">📥 Buscar da Nuvem</button>
+        <button class="btn-success" onclick="sincronizarTudo()">🔄 Sincronizar Tudo</button>
         <button onclick="verPlanilha()" style="background: #5856D6; color: white; margin-top: 10px;">📊 Ver Planilha</button>
     </div>
 
@@ -123,135 +125,115 @@
         </div>
     </div>
 
+    <!-- Formulário invisível para enviar dados -->
+    <iframe name="hiddenFrame" class="hidden"></iframe>
+    <form id="hiddenForm" action="SUA_URL_DO_GOOGLE_FORMS_AQUI" method="POST" target="hiddenFrame">
+        <input type="hidden" name="entry.XXXXX_data" id="formData">
+        <input type="hidden" name="entry.XXXXX_descricao" id="formDescricao">
+        <input type="hidden" name="entry.XXXXX_categoria" id="formCategoria">
+        <input type="hidden" name="entry.XXXXX_valor" id="formValor">
+        <input type="hidden" name="entry.XXXXX_id" id="formId">
+    </form>
+
     <script>
-        // ✅ SUA URL DO APPS SCRIPT
-        const API_URL = 'https://script.google.com/macros/s/AKfycbxQ0cpI8Dwg6FjyVjXuU3smhXgKpzBJuN76JrhIJsfwi6fH-L2QlnVvw_oMnpJ9cN2clQ/exec';
-        
+        // ✅ MÉTODO ALTERNATIVO: Dados locais com exportação manual
         let gastos = [];
+        let gastosPendentes = [];
         
-        // Inicialização quando a página carrega
+        // Inicialização
         document.addEventListener('DOMContentLoaded', function() {
-            // Configurar data atual
             const hoje = new Date();
             document.getElementById('data').value = hoje.toISOString().split('T')[0];
-            
-            // Carregar dados
             carregarDados();
         });
         
-        async function carregarDados() {
-            atualizarStatus('🔄 Carregando dados...', 'offline');
-            
-            // Primeiro tenta carregar da nuvem
-            try {
-                await carregarDaNuvem();
-            } catch (error) {
-                // Se falhar, carrega dados locais
-                carregarDoLocal();
-            }
-            
+        function carregarDados() {
+            // Sempre carrega apenas local por enquanto
+            carregarDoLocal();
             atualizarInterface();
+            atualizarStatus('📱 Modo local ativo', 'offline');
         }
         
         function carregarDoLocal() {
             const dadosLocais = localStorage.getItem('gastosApp');
             gastos = dadosLocais ? JSON.parse(dadosLocais) : [];
-            console.log('📱 Dados locais carregados:', gastos.length);
         }
         
         function salvarLocal() {
             localStorage.setItem('gastosApp', JSON.stringify(gastos));
         }
         
-        async function carregarDaNuvem() {
-            try {
-                atualizarStatus('📥 Conectando com a nuvem...', 'offline');
-                
-                const response = await fetch(API_URL);
-                
-                if (!response.ok) {
-                    throw new Error('Erro HTTP: ' + response.status);
-                }
-                
-                const dadosNuvem = await response.json();
-                
-                if (Array.isArray(dadosNuvem)) {
-                    gastos = dadosNuvem;
-                    salvarLocal();
-                    atualizarStatus('✅ ' + gastos.length + ' gastos da nuvem', 'online');
-                } else {
-                    throw new Error('Formato de dados inválido');
-                }
-                
-            } catch (error) {
-                throw new Error('Não foi possível conectar com a nuvem: ' + error.message);
-            }
-        }
-        
-        async function adicionarGasto() {
+        function adicionarGasto() {
             const data = document.getElementById('data').value;
             const descricao = document.getElementById('descricao').value;
             const categoria = document.getElementById('categoria').value;
             const valor = parseFloat(document.getElementById('valor').value);
             
-            // Validação
             if (!data || !descricao || !categoria || !valor || isNaN(valor)) {
-                alert('❌ Preencha todos os campos obrigatórios!');
-                return;
-            }
-            
-            if (valor <= 0) {
-                alert('❌ O valor deve ser maior que zero!');
+                alert('❌ Preencha todos os campos!');
                 return;
             }
             
             const novoGasto = {
-                id: Date.now(), // ID único
+                id: Date.now(),
                 data: data,
                 descricao: descricao,
                 categoria: categoria,
                 valor: valor,
-                device: 'GitHubPages-iPhone',
+                sincronizado: false,
                 timestamp: new Date().toISOString()
             };
             
-            // Adicionar localmente primeiro (feedback instantâneo)
-            gastos.unshift(novoGasto); // Adiciona no início
+            // Adicionar localmente
+            gastos.unshift(novoGasto);
+            gastosPendentes.push(novoGasto);
             salvarLocal();
             atualizarInterface();
             
-            // Limpar campos do formulário
+            // Limpar campos
             document.getElementById('descricao').value = '';
             document.getElementById('valor').value = '';
             
-            // Tentar sincronizar com a nuvem
-            try {
-                atualizarStatus('📤 Enviando para o Google Sheets...', 'offline');
-                
-                const response = await fetch(API_URL, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify(novoGasto)
-                });
-                
-                if (!response.ok) {
-                    throw new Error('Erro HTTP: ' + response.status);
-                }
-                
-                const resultado = await response.json();
-                
-                if (resultado.success) {
-                    atualizarStatus('✅ Salvo no Google Sheets!', 'online');
-                } else {
-                    throw new Error(resultado.error || 'Erro no servidor');
-                }
-                
-            } catch (error) {
-                atualizarStatus('📱 Salvo localmente', 'offline');
-                console.log('❌ Erro de sincronização:', error.message);
+            atualizarStatus('✅ Salvo localmente (' + gastos.length + ' gastos)', 'offline');
+            
+            // Tentar sincronizar em segundo plano
+            tentarSincronizarBackground();
+        }
+        
+        function tentarSincronizarBackground() {
+            // Tenta sincronizar os pendentes
+            if (gastosPendentes.length > 0) {
+                sincronizarPendentes();
             }
+        }
+        
+        function sincronizarTudo() {
+            if (gastosPendentes.length === 0) {
+                atualizarStatus('✅ Todos os dados estão sincronizados', 'online');
+                return;
+            }
+            
+            atualizarStatus('🔄 Sincronizando ' + gastosPendentes.length + ' gastos...', 'offline');
+            sincronizarPendentes();
+        }
+        
+        function sincronizarPendentes() {
+            // Método 1: Tentar via Google Forms se configurado
+            if (typeof enviarViaGoogleForms === 'function') {
+                gastosPendentes.forEach(gasto => {
+                    if (!gasto.sincronizado) {
+                        enviarViaGoogleForms(gasto);
+                    }
+                });
+            }
+            
+            // Método 2: Exportar CSV como fallback
+            setTimeout(() => {
+                if (gastosPendentes.length > 0) {
+                    atualizarStatus('📤 Pronto para exportar CSV', 'offline');
+                    alert('💡 Dica: Use "Exportar CSV" para salvar na planilha manualmente');
+                }
+            }, 2000);
         }
         
         function atualizarInterface() {
@@ -263,19 +245,16 @@
             
             gastos.forEach(gasto => {
                 totalGeral += gasto.valor;
-                
                 const dataGasto = new Date(gasto.data);
                 if (dataGasto.getMonth() === mesAtual && dataGasto.getFullYear() === anoAtual) {
                     totalMes += gasto.valor;
                 }
             });
             
-            // Atualizar totais
             document.getElementById('totalGeral').textContent = totalGeral.toFixed(2);
             document.getElementById('totalMes').textContent = totalMes.toFixed(2);
             document.getElementById('totalGastos').textContent = gastos.length;
             
-            // Atualizar lista de gastos
             atualizarListaGastos();
         }
         
@@ -289,9 +268,10 @@
             
             let html = '';
             gastos.forEach((gasto, index) => {
+                const sincronizado = gasto.sincronizado ? '✅' : '📱';
                 html += `
                     <div class="gasto-item">
-                        <div style="font-weight: 600; margin-bottom: 4px;">${gasto.descricao}</div>
+                        <div style="font-weight: 600; margin-bottom: 4px;">${sincronizado} ${gasto.descricao}</div>
                         <div style="color: #666; font-size: 14px; margin-bottom: 4px;">
                             ${gasto.data} • ${gasto.categoria}
                         </div>
@@ -306,7 +286,12 @@
         
         function excluirGasto(index) {
             if (confirm('Tem certeza que deseja excluir este gasto?')) {
+                const gastoExcluido = gastos[index];
                 gastos.splice(index, 1);
+                
+                // Remover dos pendentes se existir
+                gastosPendentes = gastosPendentes.filter(g => g.id !== gastoExcluido.id);
+                
                 salvarLocal();
                 atualizarInterface();
                 atualizarStatus('🗑️ Gasto excluído', 'offline');
@@ -322,6 +307,39 @@
         function verPlanilha() {
             window.open('https://docs.google.com/spreadsheets/d/11-gFodpaCOaDS9sP73iIxBpbpbiRbAZN4Ph0V7rcofk/edit', '_blank');
         }
+        
+        function exportarCSV() {
+            if (gastos.length === 0) {
+                alert('Nenhum dado para exportar!');
+                return;
+            }
+            
+            let csv = 'Data,Descrição,Categoria,Valor,ID\n';
+            gastos.forEach(gasto => {
+                csv += `"${gasto.data}","${gasto.descricao}","${gasto.categoria}",${gasto.valor},"${gasto.id}"\n`;
+            });
+            
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `gastos_${new Date().toISOString().split('T')[0]}.csv`;
+            a.click();
+            
+            atualizarStatus('📤 CSV exportado! Cole na planilha.', 'online');
+        }
+        
+        // Adicionar botão de exportação
+        document.addEventListener('DOMContentLoaded', function() {
+            const card = document.querySelector('.card:nth-child(3)');
+            const exportBtn = document.createElement('button');
+            exportBtn.textContent = '📤 Exportar CSV';
+            exportBtn.style.background = '#FF9500';
+            exportBtn.style.color = 'white';
+            exportBtn.style.marginTop = '10px';
+            exportBtn.onclick = exportarCSV;
+            card.appendChild(exportBtn);
+        });
     </script>
 </body>
 </html>
