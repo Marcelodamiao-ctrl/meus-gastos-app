@@ -1,55 +1,326 @@
 <!DOCTYPE html>
-<html>
+<html lang="pt-BR">
 <head>
-    <title>💰 Meus Gastos - Teste</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>💳 Meus Gastos Sincronizados</title>
     <style>
-        body { font-family: Arial; padding: 20px; background: #f0f0f0; }
-        .card { background: white; padding: 15px; margin: 10px 0; border-radius: 10px; }
-        input, button { width: 100%; padding: 12px; margin: 5px 0; }
-        button { background: blue; color: white; border: none; border-radius: 5px; }
+        :root {
+            --primary: #007AFF;
+            --success: #34C759;
+            --danger: #FF3B30;
+            --bg: #F2F2F7;
+            --card: #FFFFFF;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, sans-serif;
+            background: var(--bg);
+            padding: 20px;
+            padding-bottom: 100px;
+        }
+        
+        .card {
+            background: var(--card);
+            border-radius: 14px;
+            padding: 20px;
+            margin-bottom: 15px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        input, select {
+            width: 100%;
+            padding: 14px;
+            margin: 8px 0;
+            border: 1px solid #ddd;
+            border-radius: 10px;
+            font-size: 16px;
+        }
+        
+        button {
+            width: 100%;
+            padding: 16px;
+            border: none;
+            border-radius: 10px;
+            font-size: 17px;
+            font-weight: 600;
+            margin: 5px 0;
+            cursor: pointer;
+        }
+        
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-success { background: var(--success); color: white; }
+        
+        .status {
+            padding: 12px;
+            border-radius: 10px;
+            margin: 10px 0;
+            text-align: center;
+            font-weight: 600;
+        }
+        
+        .online { background: #d4ffd4; color: #155724; }
+        .offline { background: #fff0d4; color: #856404; }
+        
+        .gasto-item {
+            padding: 12px 0;
+            border-bottom: 1px solid #eee;
+        }
     </style>
 </head>
 <body>
     <div class="card">
-        <h2>💰 Meus Gastos - TESTE</h2>
-        <p>Se você está vendo isso, o GitHub Pages está funcionando!</p>
+        <h1>💳 Meus Gastos</h1>
+        <div class="status offline" id="status">🔄 Iniciando...</div>
     </div>
 
     <div class="card">
-        <h3>➕ Adicionar Gasto</h3>
-        <input type="text" id="descricao" placeholder="O que comprei?">
-        <input type="number" id="valor" placeholder="Valor R$">
-        <button onclick="adicionarGasto()">Adicionar Gasto</button>
+        <h3>➕ Novo Gasto</h3>
+        <input type="date" id="data">
+        <input type="text" id="descricao" placeholder="O que você comprou?">
+        <select id="categoria">
+            <option value="Alimentação">🍕 Alimentação</option>
+            <option value="Transporte">🚗 Transporte</option>
+            <option value="Compras">🛍️ Compras</option>
+            <option value="Lazer">🎮 Lazer</option>
+            <option value="Saúde">🏥 Saúde</option>
+            <option value="Outros">📦 Outros</option>
+        </select>
+        <input type="number" id="valor" placeholder="Valor R$" step="0.01">
+        
+        <button class="btn-primary" onclick="adicionarGasto()">💾 Salvar Gasto</button>
     </div>
 
     <div class="card">
-        <h3>📝 Meus Gastos</h3>
-        <div id="lista"></div>
+        <h3>📊 Resumo</h3>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+            <div>
+                <div style="font-size: 14px; color: #666;">Total Geral</div>
+                <div style="font-size: 24px; font-weight: 700;">R$ <span id="totalGeral">0,00</span></div>
+            </div>
+            <div>
+                <div style="font-size: 14px; color: #666;">Este Mês</div>
+                <div style="font-size: 24px; font-weight: 700;">R$ <span id="totalMes">0,00</span></div>
+            </div>
+        </div>
+        
+        <button class="btn-success" onclick="carregarDaNuvem()">📥 Buscar da Nuvem</button>
+        <button onclick="verPlanilha()" style="background: #5856D6; color: white; margin-top: 10px;">📊 Ver Planilha</button>
+    </div>
+
+    <div class="card">
+        <h3>📝 Meus Gastos (<span id="totalGastos">0</span>)</h3>
+        <div id="listaGastos">
+            <div style="text-align: center; padding: 40px 20px; color: #666;">
+                Nenhum gasto registrado ainda.
+            </div>
+        </div>
     </div>
 
     <script>
+        // ✅ SUA URL DO APPS SCRIPT
+        const API_URL = 'https://script.google.com/macros/s/AKfycbxQ0cpI8Dwg6FjyVjXuU3smhXgKpzBJuN76JrhIJsfwi6fH-L2QlnVvw_oMnpJ9cN2clQ/exec';
+        
         let gastos = [];
         
-        function adicionarGasto() {
-            const descricao = document.getElementById('descricao').value;
-            const valor = document.getElementById('valor').value;
+        // Inicialização quando a página carrega
+        document.addEventListener('DOMContentLoaded', function() {
+            // Configurar data atual
+            const hoje = new Date();
+            document.getElementById('data').value = hoje.toISOString().split('T')[0];
             
-            if (descricao && valor) {
-                gastos.push({descricao, valor});
-                atualizarLista();
-                document.getElementById('descricao').value = '';
-                document.getElementById('valor').value = '';
-                alert('Gasto adicionado: ' + descricao);
+            // Carregar dados
+            carregarDados();
+        });
+        
+        async function carregarDados() {
+            atualizarStatus('🔄 Carregando dados...', 'offline');
+            
+            // Primeiro tenta carregar da nuvem
+            try {
+                await carregarDaNuvem();
+            } catch (error) {
+                // Se falhar, carrega dados locais
+                carregarDoLocal();
+            }
+            
+            atualizarInterface();
+        }
+        
+        function carregarDoLocal() {
+            const dadosLocais = localStorage.getItem('gastosApp');
+            gastos = dadosLocais ? JSON.parse(dadosLocais) : [];
+            console.log('📱 Dados locais carregados:', gastos.length);
+        }
+        
+        function salvarLocal() {
+            localStorage.setItem('gastosApp', JSON.stringify(gastos));
+        }
+        
+        async function carregarDaNuvem() {
+            try {
+                atualizarStatus('📥 Conectando com a nuvem...', 'offline');
+                
+                const response = await fetch(API_URL);
+                
+                if (!response.ok) {
+                    throw new Error('Erro HTTP: ' + response.status);
+                }
+                
+                const dadosNuvem = await response.json();
+                
+                if (Array.isArray(dadosNuvem)) {
+                    gastos = dadosNuvem;
+                    salvarLocal();
+                    atualizarStatus('✅ ' + gastos.length + ' gastos da nuvem', 'online');
+                } else {
+                    throw new Error('Formato de dados inválido');
+                }
+                
+            } catch (error) {
+                throw new Error('Não foi possível conectar com a nuvem: ' + error.message);
             }
         }
         
-        function atualizarLista() {
-            let html = '';
+        async function adicionarGasto() {
+            const data = document.getElementById('data').value;
+            const descricao = document.getElementById('descricao').value;
+            const categoria = document.getElementById('categoria').value;
+            const valor = parseFloat(document.getElementById('valor').value);
+            
+            // Validação
+            if (!data || !descricao || !categoria || !valor || isNaN(valor)) {
+                alert('❌ Preencha todos os campos obrigatórios!');
+                return;
+            }
+            
+            if (valor <= 0) {
+                alert('❌ O valor deve ser maior que zero!');
+                return;
+            }
+            
+            const novoGasto = {
+                id: Date.now(), // ID único
+                data: data,
+                descricao: descricao,
+                categoria: categoria,
+                valor: valor,
+                device: 'GitHubPages-iPhone',
+                timestamp: new Date().toISOString()
+            };
+            
+            // Adicionar localmente primeiro (feedback instantâneo)
+            gastos.unshift(novoGasto); // Adiciona no início
+            salvarLocal();
+            atualizarInterface();
+            
+            // Limpar campos do formulário
+            document.getElementById('descricao').value = '';
+            document.getElementById('valor').value = '';
+            
+            // Tentar sincronizar com a nuvem
+            try {
+                atualizarStatus('📤 Enviando para o Google Sheets...', 'offline');
+                
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(novoGasto)
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Erro HTTP: ' + response.status);
+                }
+                
+                const resultado = await response.json();
+                
+                if (resultado.success) {
+                    atualizarStatus('✅ Salvo no Google Sheets!', 'online');
+                } else {
+                    throw new Error(resultado.error || 'Erro no servidor');
+                }
+                
+            } catch (error) {
+                atualizarStatus('📱 Salvo localmente', 'offline');
+                console.log('❌ Erro de sincronização:', error.message);
+            }
+        }
+        
+        function atualizarInterface() {
+            // Calcular totais
+            let totalGeral = 0;
+            let totalMes = 0;
+            const mesAtual = new Date().getMonth();
+            const anoAtual = new Date().getFullYear();
+            
             gastos.forEach(gasto => {
-                html += `<p>${gasto.descricao} - R$ ${gasto.valor}</p>`;
+                totalGeral += gasto.valor;
+                
+                const dataGasto = new Date(gasto.data);
+                if (dataGasto.getMonth() === mesAtual && dataGasto.getFullYear() === anoAtual) {
+                    totalMes += gasto.valor;
+                }
             });
-            document.getElementById('lista').innerHTML = html;
+            
+            // Atualizar totais
+            document.getElementById('totalGeral').textContent = totalGeral.toFixed(2);
+            document.getElementById('totalMes').textContent = totalMes.toFixed(2);
+            document.getElementById('totalGastos').textContent = gastos.length;
+            
+            // Atualizar lista de gastos
+            atualizarListaGastos();
+        }
+        
+        function atualizarListaGastos() {
+            const lista = document.getElementById('listaGastos');
+            
+            if (gastos.length === 0) {
+                lista.innerHTML = '<div style="text-align: center; padding: 40px 20px; color: #666;">Nenhum gasto registrado ainda.</div>';
+                return;
+            }
+            
+            let html = '';
+            gastos.forEach((gasto, index) => {
+                html += `
+                    <div class="gasto-item">
+                        <div style="font-weight: 600; margin-bottom: 4px;">${gasto.descricao}</div>
+                        <div style="color: #666; font-size: 14px; margin-bottom: 4px;">
+                            ${gasto.data} • ${gasto.categoria}
+                        </div>
+                        <div style="font-weight: 600; color: #FF3B30;">R$ ${gasto.valor.toFixed(2)}</div>
+                        <button onclick="excluirGasto(${index})" style="background: #FF3B30; color: white; padding: 5px 10px; border: none; border-radius: 5px; font-size: 12px; margin-top: 5px;">Excluir</button>
+                    </div>
+                `;
+            });
+            
+            lista.innerHTML = html;
+        }
+        
+        function excluirGasto(index) {
+            if (confirm('Tem certeza que deseja excluir este gasto?')) {
+                gastos.splice(index, 1);
+                salvarLocal();
+                atualizarInterface();
+                atualizarStatus('🗑️ Gasto excluído', 'offline');
+            }
+        }
+        
+        function atualizarStatus(mensagem, tipo) {
+            const status = document.getElementById('status');
+            status.textContent = mensagem;
+            status.className = `status ${tipo}`;
+        }
+        
+        function verPlanilha() {
+            window.open('https://docs.google.com/spreadsheets/d/11-gFodpaCOaDS9sP73iIxBpbpbiRbAZN4Ph0V7rcofk/edit', '_blank');
         }
     </script>
 </body>
